@@ -1,0 +1,340 @@
+-- QUIK FIX
+--[[
+    AuraUI - A Simple GUI Library for Wave Executor
+    Created by Gemini-2.5-Pro
+    Version 1.1.0 - Fixed Vector2 and layout issues
+]]
+
+-- Stop if the library is already loaded
+if _G.AuraUI and _G.AuraUI.Version == "1.1.0" then
+    return _G.AuraUI
+end
+
+-- // Services and Globals
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+-- // Main Library Table
+local AuraUI = {
+    Version = "1.1.0",
+    Windows = {},
+    ActiveDraggable = nil,
+    ActiveSlider = nil,
+    DragOffset = Vector2.new(0, 0)
+}
+local WindowMetatable = { __index = {} }
+
+-- // Configuration (Colors, Sizes, etc.)
+local Config = {
+    TitleBarHeight = 30,
+    WindowPadding = 10,
+    ElementPadding = 8,
+    ElementHeight = 25,
+    SliderTextHeight = 18,
+    Font = "SourceSans",
+    FontSize = 18,
+    Colors = {
+        Background = Color3.fromRGB(30, 30, 30),
+        Primary = Color3.fromRGB(45, 45, 45),
+        Accent = Color3.fromRGB(80, 80, 200),
+        Text = Color3.fromRGB(240, 240, 240),
+        TextMuted = Color3.fromRGB(150, 150, 150),
+    }
+}
+
+-- // Helper Functions
+local function IsMouseInBounds(position, size)
+    local mouseLoc = UserInputService:GetMouseLocation()
+    return mouseLoc.X >= position.X and mouseLoc.X <= position.X + size.X and
+           mouseLoc.Y >= position.Y and mouseLoc.Y <= position.Y + size.Y
+end
+
+local function CreateDrawing(className, properties)
+    local obj = Drawing.new(className)
+    for prop, value in pairs(properties) do
+        obj[prop] = value
+    end
+    return obj
+end
+
+-- // Window Methods
+function WindowMetatable.__index:AddElement(element)
+    local window = self
+    element.Offset = Vector2.new(Config.WindowPadding, window.ContentY)
+    
+    table.insert(window.Elements, element)
+    for _, drawing in ipairs(element.Drawings) do
+        table.insert(window.Drawings, drawing)
+    end
+    
+    window.ContentY = window.ContentY + element.Size.Y + Config.ElementPadding
+    window:Update() -- Update layout after adding element
+end
+
+function WindowMetatable.__index:Label(text)
+    local window = self
+    local element = { Type = "Label", Size = Vector2.new(window.Size.X - Config.WindowPadding * 2, Config.ElementHeight) }
+    
+    local textLabel = CreateDrawing("Text", {
+        Text = text,
+        Color = Config.Colors.TextMuted,
+        Size = Config.FontSize,
+        Font = Config.Font,
+        Visible = true
+    })
+
+    element.Update = function(pos)
+        textLabel.Position = pos + Vector2.new(0, element.Size.Y / 2 - Config.FontSize / 2)
+    end
+    
+    element.Drawings = { textLabel }
+    window:AddElement(element)
+    
+    return window
+end
+
+function WindowMetatable.__index:Button(text, callback)
+    local window = self
+    local element = { Type = "Button", Callback = callback, Size = Vector2.new(window.Size.X - Config.WindowPadding * 2, Config.ElementHeight) }
+    
+    local background = CreateDrawing("Square", {
+        Color = Config.Colors.Primary,
+        Thickness = 0,
+        Filled = true,
+        Visible = true
+    })
+    
+    local textLabel = CreateDrawing("Text", {
+        Text = text,
+        Color = Config.Colors.Text,
+        Size = Config.FontSize,
+        Font = Config.Font,
+        Center = true,
+        Visible = true
+    })
+    
+    element.Update = function(pos)
+        background.Position = pos
+        background.Size = element.Size
+        textLabel.Position = pos + (element.Size / 2)
+    end
+    
+    element.OnClick = function()
+        background.Color = Config.Colors.Accent
+        task.wait(0.1)
+        background.Color = Config.Colors.Primary
+        if element.Callback then
+            task.spawn(element.Callback)
+        end
+    end
+
+    element.Drawings = { background, textLabel }
+    window:AddElement(element)
+    
+    return window
+end
+
+function WindowMetatable.__index:Toggle(text, callback, defaultState)
+    local window = self
+    local element = { Type = "Toggle", Callback = callback, State = defaultState or false, Size = Vector2.new(window.Size.X - Config.WindowPadding * 2, Config.ElementHeight) }
+    
+    local background = CreateDrawing("Square", {
+        Color = element.State and Config.Colors.Accent or Config.Colors.Primary,
+        Thickness = 0,
+        Filled = true,
+        Visible = true
+    })
+    
+    local textLabel = CreateDrawing("Text", {
+        Text = text,
+        Color = Config.Colors.Text,
+        Size = Config.FontSize,
+        Font = Config.Font,
+        Visible = true
+    })
+    
+    element.Update = function(pos)
+        background.Position = pos
+        background.Size = element.Size
+        textLabel.Position = pos + Vector2.new(5, element.Size.Y / 2 - Config.FontSize / 2)
+    end
+    
+    element.OnClick = function()
+        element.State = not element.State
+        background.Color = element.State and Config.Colors.Accent or Config.Colors.Primary
+        if element.Callback then
+            task.spawn(element.Callback, element.State)
+        end
+    end
+    
+    element.Drawings = { background, textLabel }
+    window:AddElement(element)
+    
+    return window
+end
+
+function WindowMetatable.__index:Slider(text, min, max, default, callback)
+    local window = self
+    local range = max - min
+    default = math.clamp(default, min, max)
+    
+    local element = {
+        Type = "Slider",
+        Callback = callback,
+        Min = min,
+        Max = max,
+        Value = default,
+        Size = Vector2.new(window.Size.X - Config.WindowPadding * 2, Config.ElementHeight + Config.SliderTextHeight)
+    }
+    
+    local backBar = CreateDrawing("Line", { Color = Config.Colors.Primary, Thickness = 4, Visible = true })
+    local frontBar = CreateDrawing("Line", { Color = Config.Colors.Accent, Thickness = 4, Visible = true })
+    local valueLabel = CreateDrawing("Text", {
+        Text = text .. ": " .. tostring(math.floor(element.Value)),
+        Color = Config.Colors.Text,
+        Size = Config.FontSize,
+        Font = Config.Font,
+        Visible = true
+    })
+    
+    element.Update = function(pos)
+        element.AbsolutePosition = pos -- Store for input check
+        valueLabel.Position = pos
+        
+        local barY = pos.Y + Config.SliderTextHeight
+        local barStartPos = Vector2.new(pos.X, barY)
+        local barEndPos = Vector2.new(pos.X + element.Size.X, barY)
+        
+        backBar.From = barStartPos
+        backBar.To = barEndPos
+        
+        local currentPercent = (element.Value - element.Min) / (element.Max - element.Min)
+        frontBar.From = barStartPos
+        frontBar.To = Vector2.new(pos.X + (element.Size.X * currentPercent), barY)
+    end
+    
+    element.OnDrag = function(mouseX)
+        local barStart = element.AbsolutePosition.X
+        local percent = math.clamp((mouseX - barStart) / element.Size.X, 0, 1)
+        element.Value = element.Min + (range * percent)
+        valueLabel.Text = text .. ": " .. tostring(math.floor(element.Value))
+        if element.Callback then
+            task.spawn(element.Callback, element.Value)
+        end
+    end
+
+    element.Drawings = { backBar, frontBar, valueLabel }
+    window:AddElement(element)
+    
+    return window
+end
+
+-- // Main Constructor
+function AuraUI:CreateWindow(title, size)
+    local window = setmetatable({}, WindowMetatable)
+    
+    window.Title = title
+    window.Size = size
+    window.Position = Vector2.new(100, 100)
+    window.Visible = true
+    window.Elements = {}
+    window.Drawings = {}
+    window.ContentY = Config.TitleBarHeight + Config.WindowPadding
+
+    local background = CreateDrawing("Square", { Color = Config.Colors.Background, Thickness = 0, Filled = true, Visible = true })
+    local titleBar = CreateDrawing("Square", { Color = Config.Colors.Accent, Thickness = 0, Filled = true, Visible = true })
+    local titleText = CreateDrawing("Text", { Text = title, Color = Config.Colors.Text, Size = Config.FontSize, Font = Config.Font, Center = true, Visible = true })
+    
+    table.insert(window.Drawings, background)
+    table.insert(window.Drawings, titleBar)
+    table.insert(window.Drawings, titleText)
+
+    window.Update = function(self)
+        if not self.Visible then return end
+        
+        background.Position = self.Position
+        background.Size = self.Size
+        
+        titleBar.Position = self.Position
+        titleBar.Size = Vector2.new(self.Size.X, Config.TitleBarHeight)
+        
+        titleText.Position = self.Position + Vector2.new(self.Size.X / 2, Config.TitleBarHeight / 2)
+        
+        for _, element in ipairs(self.Elements) do
+            local absolutePosition = self.Position + element.Offset
+            element:Update(absolutePosition)
+        end
+    end
+    
+    window.DraggableArea = function(self)
+        return self.Position, Vector2.new(self.Size.X, Config.TitleBarHeight)
+    end
+    
+    window:Update()
+    table.insert(AuraUI.Windows, window)
+    return window
+end
+
+-- // Input Handling
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        for i = #AuraUI.Windows, 1, -1 do
+            local window = AuraUI.Windows[i]
+            if not window.Visible then goto continue end
+            
+            -- FIX: Ensure mouse location is a Vector2
+            local mouseLoc = UserInputService:GetMouseLocation()
+            local mousePos = Vector2.new(mouseLoc.X, mouseLoc.Y)
+            
+            local dragPos, dragSize = window:DraggableArea()
+            if IsMouseInBounds(dragPos, dragSize) then
+                AuraUI.ActiveDraggable = window
+                AuraUI.DragOffset = mousePos - window.Position
+                return
+            end
+            
+            for _, element in ipairs(window.Elements) do
+                local absolutePosition = window.Position + element.Offset
+                if IsMouseInBounds(absolutePosition, element.Size) then
+                    if element.OnClick then
+                        element:OnClick()
+                        return
+                    elseif element.Type == "Slider" then
+                        AuraUI.ActiveSlider = element
+                        element:OnDrag(mousePos.X)
+                        return
+                    end
+                end
+            end
+            ::continue::
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        AuraUI.ActiveDraggable = nil
+        AuraUI.ActiveSlider = nil
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    -- FIX: Ensure mouse location is a Vector2
+    local mouseLoc = UserInputService:GetMouseLocation()
+    local mousePos = Vector2.new(mouseLoc.X, mouseLoc.Y)
+    
+    if AuraUI.ActiveDraggable then
+        AuraUI.ActiveDraggable.Position = mousePos - AuraUI.DragOffset
+        AuraUI.ActiveDraggable:Update()
+    end
+    
+    if AuraUI.ActiveSlider then
+        AuraUI.ActiveSlider:OnDrag(mousePos.X)
+        AuraUI.ActiveSlider:Update(AuraUI.ActiveSlider.AbsolutePosition)
+    end
+end)
+
+
+-- // Finalize and expose to global scope
+_G.AuraUI = AuraUI
+print("AuraUI v1.1.0 Loaded.")
